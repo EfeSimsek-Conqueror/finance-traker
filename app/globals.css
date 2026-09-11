@@ -1,26 +1,84 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  color-scheme: dark;
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+html,
+body {
+  margin: 0;
+  padding: 0;
+  background: #141110;
+  color: #f3ede7;
+  font-family: var(--sans), system-ui, sans-serif;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+/* The portfolio map is a fixed, pannable surface and must not scroll the page
+   behind it; the resource board is an ordinary document and must. Scrolling is
+   therefore opted into per page rather than banned globally. */
+body:has([data-surface="canvas"]) {
+  overflow: hidden;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: #332d29;
+  border-radius: 8px;
+  border: 3px solid #141110;
+}
+
+/* Between screens.
+   Opacity only, and that is load-bearing rather than a style choice: a
+   `transform` on an ancestor makes `position: fixed` resolve against that
+   ancestor instead of the viewport. The portfolio map is a fixed, full-screen
+   surface inside a zero-height wrapper, so a transform here collapsed it to
+   nothing — the text was in the DOM and the page was blank. Opacity creates a
+   stacking context but never a containing block, so it is safe. */
+@keyframes screenIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
   }
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+/* The panel clearing itself for a new thread. A short rise rather than a
+   cross-fade: the old thread should read as leaving, not dissolving into the
+   empty state that replaces it. */
+@keyframes sweepIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* The ＋ answering for itself, so the click is felt even when the panel was
+   already empty and nothing else on screen changes. */
+@keyframes twist {
+  from {
+    transform: rotate(-135deg) scale(0.6);
+    opacity: 0.4;
+  }
+  to {
+    transform: none;
+    opacity: 1;
+  }
+}
+
+@keyframes fadeUp {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
 }
