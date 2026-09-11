@@ -17,6 +17,16 @@ const PUBLIC = ["/login", "/api/auth"];  // /api/auth covers the passkey steps,
 /** The scheduled sync authenticates with its own secret, not a browser session. */
 const CRON = ["/api/sync", "/api/briefing"];
 
+/**
+ * Pushed readings authenticate with their own secret too.
+ *
+ * Crashlytics will not be polled — the only crash data that leaves Firebase is
+ * an alert it sends. So a Cloud Function posts here with no cookie to offer,
+ * and it gets its own secret rather than the cron one: a webhook handed to a
+ * third-party project should not carry the key that can also trigger a sync.
+ */
+const INGEST = ["/api/ingest"];
+
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
@@ -30,6 +40,13 @@ export async function middleware(request: NextRequest) {
     }
     // No cron secret on the request: fall through to the session check, so a
     // signed-in operator can still trigger a sync by hand.
+  }
+
+  if (INGEST.some((p) => pathname.startsWith(p))) {
+    const secret = process.env.INGEST_SECRET;
+    if (secret && request.headers.get("x-ingest-secret") === secret) return NextResponse.next();
+    // Same fall-through as the cron routes: an operator with a session can
+    // replay a payload by hand to see what the board does with it.
   }
 
   const who = await readSession(request.cookies.get(SESSION_COOKIE)?.value);

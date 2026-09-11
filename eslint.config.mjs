@@ -12,6 +12,9 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Deployed into Firebase, not bundled by Next. Cloud Functions are
+    // CommonJS, so the app's module rules do not apply to it.
+    "integrations/**",
   ]),
 ]);
 

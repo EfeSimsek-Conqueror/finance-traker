@@ -1,4 +1,5 @@
 import { serviceClient, connectionState, type Connection, type Resource } from "@/lib/apps";
+import { listCrashes } from "@/lib/crashes";
 import { byVendor, costMtd, coverage, ghostVendors, mergeCeilings, usd } from "@/lib/money";
 
 /**
@@ -30,16 +31,17 @@ export type Finding = {
 export async function deriveFindings(appId: string, slug: string): Promise<Finding[]> {
   const db = serviceClient();
 
-  const [{ data: rows }, { data: conns }, { data: app }, { data: briefs }] = await Promise.all([
+  const [{ data: rows }, { data: conns }, { data: app }, { data: briefs }, crashes] = await Promise.all([
     db.from("resources").select("*").eq("app_id", appId).eq("is_sample", false),
     db.from("connections").select("id, vendor, status, last_sync_at, last_error").eq("app_id", appId),
-    db.from("apps").select("name, budget_usd").eq("id", appId).maybeSingle(),
+    db.from("apps").select("name, budget_usd, stack, firebase_app_ids").eq("id", appId).maybeSingle(),
     db
       .from("briefings")
       .select("cost_usd_day, attempts, status")
       .eq("app_id", appId)
       .order("briefing_date", { ascending: false })
       .limit(1),
+    listCrashes(appId, 7),
   ]);
 
   // Merged, because that is what the board renders. Reading the raw rows made
@@ -125,6 +127,78 @@ export async function deriveFindings(appId: string, slug: string): Promise<Findi
         : "The rows are still on the board, still rendering as current. They describe whenever the last sync was.",
       action: "Re-read them",
       prompt: `Sync ${stale.map((c) => c.vendor).join(" and ")} now and tell me what changed.`,
+    });
+  }
+
+  // ── what is breaking, as opposed to what is costing ────────────────────
+  //
+  // Crashes earn a place on a finance board for one reason: they are the
+  // cheapest spend there is to explain. A release that crashes on launch bills
+  // for the same infrastructure while earning nothing, and a revenue line that
+  // flattens the week a regression shipped is not a pricing problem.
+  const regressions = crashes.filter((c) => c.kind === "regression");
+  const velocity = crashes.filter((c) => c.kind === "velocity");
+  const fresh = crashes.filter((c) => c.kind === "fatal" || c.kind === "anr");
+
+  if (velocity.length || regressions.length) {
+    const worst = velocity[0] ?? regressions[0];
+    const share = worst.crash_percentage != null ? `${worst.crash_percentage.toFixed(1)}% of sessions` : null;
+    out.push({
+      id: `crash:${worst.issue_id}`,
+      tag: regressions.length ? "REGR" : "RATE",
+      tagTone: "warn",
+      where: `${worst.platform ?? "app"}${worst.app_version ? ` · ${worst.app_version}` : ""}`,
+      title: regressions.length
+        ? `A crash marked closed is happening again: ${worst.title}.`
+        : `${worst.title} is crashing fast enough for Firebase to interrupt.`,
+      // Only what Crashlytics actually said. It reports counts on a velocity
+      // alert and nothing but the issue on a regression, so the sentence
+      // changes rather than filling the gap with a plausible number.
+      body: [
+        share,
+        worst.user_count != null ? `${worst.user_count} user${worst.user_count === 1 ? "" : "s"}` : null,
+        worst.event_count != null ? `${worst.event_count} event${worst.event_count === 1 ? "" : "s"}` : null,
+      ]
+        .filter(Boolean)
+        .join(" · ") || "Firebase sent the alert without counts; the issue page has them.",
+      action: "Read the week",
+      prompt: `Crashlytics flagged "${worst.title}" on ${slug}. What else has this app reported in the last week, and does the timing line up with anything on the board?`,
+    });
+  } else if (fresh.length > 1) {
+    out.push({
+      id: "crash:new",
+      tag: "NEW",
+      tagTone: "note",
+      where: `${slug} · crashes`,
+      title: `${fresh.length} new crash${fresh.length === 1 ? "" : "es"} started this week.`,
+      body: `${fresh
+        .slice(0, 3)
+        .map((c) => c.title)
+        .join(", ")}. None frequent enough for Firebase to raise a velocity alert, which is the only thing keeping ${
+        fresh.length === 1 ? "it" : "them"
+      } off this list as urgent.`,
+      action: "Look at them",
+      prompt: `Summarise the new crashes on ${slug} this week and tell me which one is worth fixing first.`,
+    });
+  }
+
+  // A mobile app with no crash reporting wired is the same failure this console
+  // exists to name: a thing that is happening, uncounted. Silence from a
+  // connected app means no crashes; silence from an unconnected one means
+  // nothing at all, and the two must not look alike.
+  const mobile = (app?.stack ?? []).some((s: string) =>
+    /ios|android|swift|kotlin|flutter|react.?native|expo/i.test(s),
+  );
+  if (mobile && !(app?.firebase_app_ids ?? []).length) {
+    out.push({
+      id: "crash:unwired",
+      tag: "GAP",
+      tagTone: "gap",
+      where: `${app?.name ?? slug} · stability`,
+      title: "Nothing on this board can see the app crashing.",
+      body: "The stack is mobile and no Firebase app is mapped, so crashes are not absent here — they are unmeasured. Revenue and spend keep rendering as if the app works.",
+      action: "Wire it up",
+      prompt: `What do I need to do to get Crashlytics alerts from ${slug} onto this board?`,
     });
   }
 

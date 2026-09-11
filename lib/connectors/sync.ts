@@ -6,6 +6,7 @@ import { fetchVercelBilling } from "./vercel";
 import { fetchLedger } from "./ledger";
 import { record } from "@/lib/readings";
 import { fetchGoogleQuota } from "./google";
+import { VENDORS } from "@/lib/sources";
 
 export type SyncResult = { ok: boolean; vendor: string; message: string; wrote?: number };
 
@@ -393,12 +394,15 @@ const SUB_CEILINGS: Record<string, string> = {
   "YouTube · video uploads": "video_upload",
 };
 
-/** Vendors this build can actually read, in the order they matter. */
-export const SUPPORTED_VENDORS = [
-  { id: "fal.ai", label: "fal.ai", hint: "ADMIN-scope key from fal.ai/dashboard/keys" },
-  { id: "stripe", label: "Stripe", hint: "secret key (sk_live_… or sk_test_…)" },
-  { id: "vercel", label: "Vercel", hint: "account token, pasted as <token>|<team id>" },
-  { id: "ledger", label: "App own ledger", hint: "<supabase project ref>|<service role key>" },
-  { id: "revenuecat", label: "RevenueCat", hint: "v2 secret key, pasted as <key>|<project id>" },
-  { id: "google", label: "Google Cloud", hint: "the whole service-account JSON file" },
-] as const;
+/**
+ * Vendors this build can actually read, in the order they matter.
+ *
+ * Derived from the catalogue rather than restated, so the add dialog and the
+ * assistant can never disagree about what is connectable. The hint is the
+ * credential's parts in the order the connector splits them.
+ */
+export const SUPPORTED_VENDORS = VENDORS.map((v) => ({
+  id: v.id,
+  label: v.label,
+  hint: `${v.fields.map((f) => f.label.toLowerCase()).join(" | ")} \u00b7 ${v.where}`,
+}));

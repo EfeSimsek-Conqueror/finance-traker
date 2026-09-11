@@ -48,12 +48,20 @@ export async function falKey(): Promise<string> {
   return data.secret as string;
 }
 
+/**
+ * What the model is allowed to do with the tools it was handed.
+ *
+ * "none" forces prose — used to make the assistant land its answer. Naming a
+ * function forces that one call, which is how a turn that exists only to fill
+ * in a form gets a filled-in form rather than a paragraph about one.
+ */
+export type ToolChoice = "auto" | "none" | { type: "function"; function: { name: string } };
+
 export async function chat(
   key: string,
   messages: ChatMessage[],
   tools: unknown[],
-  /** "none" forces prose — used to make the model land the answer. */
-  toolChoice: "auto" | "none" = "auto",
+  toolChoice: ToolChoice = "auto",
 ): Promise<Completion> {
   const res = await fetch(ENDPOINT, {
     method: "POST",
@@ -61,7 +69,7 @@ export async function chat(
     body: JSON.stringify(
       toolChoice === "none"
         ? { model: MODEL, messages }
-        : { model: MODEL, messages, tools, tool_choice: "auto" },
+        : { model: MODEL, messages, tools, tool_choice: toolChoice },
     ),
   });
 

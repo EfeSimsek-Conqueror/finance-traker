@@ -4,6 +4,7 @@ import { connectionState } from "@/lib/apps";
 import { costMtd, counted, coverage, ghostVendors, revenueMtd, sourceRank, usd } from "@/lib/money";
 import type { Judgement } from "@/lib/status";
 import { BoardChrome } from "./board-chrome";
+import { AddSource } from "./add-source";
 
 /**
  * One app's resources, as a document.
@@ -138,6 +139,7 @@ export function ResourceBoard({
           />
           <span>{lastSync ? `last sync ${ago(lastSync)}` : "never synced"}</span>
         </div>
+        <AddSource appId={app.id} tone={resources.length ? "quiet" : "loud"} />
         <BoardChrome />
         </div>
       </header>
@@ -155,6 +157,10 @@ export function ResourceBoard({
           gap: 28,
         }}
       >
+        {/* An app with nothing attached is the normal first state, not a
+            broken one — and the fix is three questions, so it says which. */}
+        {resources.length === 0 && <Nothing appId={app.id} />}
+
         {/* ── the four figures everything else explains ───────────── */}
         <section
           style={{
@@ -380,6 +386,38 @@ export function ResourceBoard({
 }
 
 /* ── pieces ──────────────────────────────────────────────────────────────── */
+
+/**
+ * The zero state.
+ *
+ * Every app starts here, and a blank page would leave the reader guessing
+ * whether the board is empty or broken. It names the three steps because they
+ * are the same three for every app and every vendor: pick what kind of box this
+ * is, say what it is, hand over what it needs to report.
+ */
+function Nothing({ appId }: { appId: string }) {
+  return (
+    <section
+      style={{
+        border: `1px dashed #3A322E`,
+        borderRadius: 14,
+        background: CARD,
+        padding: "26px 24px",
+      }}
+    >
+      <div style={{ ...SERIF, fontSize: 20 }}>Nothing is attached to this app yet</div>
+      <div style={{ fontSize: 13, color: INK_3, marginTop: 10, lineHeight: 1.65, maxWidth: 640 }}>
+        So every figure above is unknown rather than zero, and stays that way until something
+        reports. Adding a box is three questions: which kind of box it is, what it is, and what it
+        needs in order to work — a key, an id, a file. The credential is tried against the vendor
+        before the dialog closes, so a wrong one is a sentence rather than a blank card tomorrow.
+      </div>
+      <div style={{ marginTop: 18 }}>
+        <AddSource appId={appId} tone="loud" />
+      </div>
+    </section>
+  );
+}
 
 function Kpi({ label, value, note, color }: { label: string; value: string; note: string; color: string }) {
   return (

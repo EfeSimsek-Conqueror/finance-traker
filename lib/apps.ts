@@ -140,3 +140,20 @@ export async function listConnections(appId: string): Promise<Connection[]> {
   }
   return (data ?? []) as Connection[];
 }
+
+/** What a portfolio tile can say without opening the app. */
+export type AppSummary = {
+  costMtd: number;
+  revenueMtd: number | null;
+  /** Ceilings at or past the warn threshold, with a reading behind them. */
+  nearLimit: number;
+  /** Worst tone across this app's ceilings. */
+  tone: "ok" | "warn" | "crit" | "neutral";
+  connected: number;
+  stale: number;
+  errored: number;
+  /** Vendors that bill and report nothing. The total is a floor while this is > 0. */
+  unmeasured: number;
+  measuredRows: number;
+  lastSync: string | null;
+};

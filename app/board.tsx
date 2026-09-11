@@ -1,8 +1,10 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import Link from "next/link";
-import type { App } from "@/lib/apps";
+import type { App, AppSummary } from "@/lib/apps";
+import { usd } from "@/lib/money";
 import { Canvas, usePanel } from "./canvas";
 
 const TILE = 300;
@@ -16,7 +18,23 @@ const GAP = 140;
  * itself the moment a number moves, which is exactly when you least want the
  * screen to change shape.
  */
-export function Board({ apps }: { apps: App[] }) {
+const TONE: Record<string, string> = {
+  ok: "#5FA777",
+  warn: "#C8894F",
+  crit: "#D97757",
+  neutral: "#4A413C",
+};
+
+export function Board({
+  apps,
+  summaries,
+  portfolioCost,
+}: {
+  apps: App[];
+  summaries: Record<string, AppSummary>;
+  /** Deduped across apps — the tiles do not add up to this, on purpose. */
+  portfolioCost: string;
+}) {
   const [adding, setAdding] = useState(false);
 
   const addX = apps.length ? Math.max(...apps.map((a) => a.x)) + TILE + GAP : 160;
@@ -38,13 +56,12 @@ export function Board({ apps }: { apps: App[] }) {
         bounds={bounds}
         chrome={
           <>
-            <AttentionStrip />
-            <PortfolioPill count={apps.length} />
+            <AttentionStrip summaries={summaries} portfolioCost={portfolioCost} />
           </>
         }
       >
         {apps.map((a) => (
-          <Tile key={a.id} app={a} />
+          <Tile key={a.id} app={a} s={summaries[a.id]} />
         ))}
         <AddTile x={addX} y={addY} onClick={() => setAdding(true)} />
       </Canvas>
@@ -107,7 +124,42 @@ function AssistantToggle() {
   );
 }
 
-function AttentionStrip() {
+/** How long ago, in the least precise unit that is still useful. */
+function ago(iso: string): string {
+  const mins = Math.round((Date.now() - Date.parse(iso)) / 60_000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins} min ago`;
+  const hours = Math.round(mins / 60);
+  return hours < 48 ? `${hours}h ago` : `${Math.round(hours / 24)} days ago`;
+}
+
+function AttentionStrip({
+  summaries,
+  portfolioCost,
+}: {
+  summaries: Record<string, AppSummary>;
+  portfolioCost: string;
+}) {
+  const all = Object.values(summaries);
+  const near = all.reduce((t, s) => t + s.nearLimit, 0);
+  const unmeasured = all.reduce((t, s) => t + s.unmeasured, 0);
+  const broken = all.reduce((t, s) => t + s.errored + s.stale, 0);
+  const measured = all.reduce((t, s) => t + s.measuredRows, 0);
+
+  const line = near
+    ? `${near} ceiling${near === 1 ? "" : "s"} near a limit`
+    : broken
+      ? `${broken} connector${broken === 1 ? "" : "s"} not reporting now`
+      : measured
+        ? `nothing near a limit · ${unmeasured} vendor${unmeasured === 1 ? "" : "s"} still unmeasured`
+        : "nothing measured — connect a vendor to start projecting";
+
+  const tone = near ? "#D97757" : broken ? "#C8894F" : measured ? "#5FA777" : "#4A413C";
+
+  return <Strip line={line} tone={tone} total={measured ? portfolioCost : null} />;
+}
+
+function Strip({ line, tone, total }: { line: string; tone: string; total: string | null }) {
   return (
     <div
       data-chrome="1"
@@ -142,7 +194,7 @@ function AttentionStrip() {
         Cloudgeng Finance Tracker
       </span>
       <span style={{ width: 1, height: 16, background: "#2A2523", margin: "0 6px" }} />
-      <span style={{ width: 8, height: 8, borderRadius: "50%", background: "#4A413C" }} />
+      <span style={{ width: 8, height: 8, borderRadius: "50%", background: tone }} />
       <span
         style={{
           fontFamily: "var(--mono)",
@@ -154,59 +206,25 @@ function AttentionStrip() {
       >
         Runs out &lt; 24h
       </span>
-      <span style={{ fontSize: 13, color: "#6E645D" }}>
-        nothing measured — connect a vendor to start projecting
-      </span>
+      <span style={{ fontSize: 13, color: "#6E645D" }}>{line}</span>
+      {total && (
+        <>
+          <span style={{ width: 1, height: 16, background: "#2A2523", margin: "0 4px" }} />
+          <span style={{ fontFamily: "var(--mono)", fontSize: 13, color: "#B5ABA3" }}>
+            {total} this month
+          </span>
+          <span style={{ fontSize: 12, color: "#6E645D" }}>
+            portfolio-wide · shared bills counted once
+          </span>
+        </>
+      )}
       <span style={{ flex: 1 }} />
       <AssistantToggle />
     </div>
   );
 }
 
-function PortfolioPill({ count }: { count: number }) {
-  return (
-    <div
-      data-chrome="1"
-      style={{
-        position: "absolute",
-        top: 70,
-        left: 22,
-        display: "flex",
-        alignItems: "center",
-        gap: 14,
-        padding: "13px 20px 13px 14px",
-        borderRadius: 16,
-        border: "1px solid #1b1f26",
-        background: "rgba(4,4,5,.9)",
-        backdropFilter: "blur(6px)",
-        zIndex: 10,
-      }}
-    >
-      <span
-        style={{
-          width: 30,
-          height: 30,
-          borderRadius: 9,
-          background: "#f0f2f5",
-          display: "grid",
-          placeItems: "center",
-          fontFamily: "var(--mono)",
-          fontSize: 14,
-          fontWeight: 700,
-          color: "#05070a",
-        }}
-      >
-        C
-      </span>
-      <span style={{ fontSize: 16, fontWeight: 700, color: "#e4ecf7" }}>Portfolio</span>
-      <span style={{ fontFamily: "var(--mono)", fontSize: 12.5, color: "#44586f" }}>
-        {count} app{count === 1 ? "" : "s"} · click a card to open it, drag to rearrange
-      </span>
-    </div>
-  );
-}
-
-function Tile({ app }: { app: App }) {
+function Tile({ app, s }: { app: App; s?: AppSummary }) {
   return (
     <Link
       href={`/app/${app.slug}`}
@@ -304,10 +322,17 @@ function Tile({ app }: { app: App }) {
             zIndex: 1,
           }}
         >
-          {/* No connector has run yet, so the honest status is "unknown", not a
-              green dot. A gauge that shows a colour it has not measured is
-              worse than no gauge. */}
-          <span style={{ width: 7, height: 7, borderRadius: "50%", background: "#8b949e" }} />
+          {/* The dot is the worst tone across this app's ceilings, and grey
+              still means nothing has been measured — which is now a fact about
+              the rows rather than a string. */}
+          <span
+            style={{
+              width: 7,
+              height: 7,
+              borderRadius: "50%",
+              background: TONE[s?.tone ?? "neutral"],
+            }}
+          />
           <span
             style={{
               fontFamily: "var(--mono)",
@@ -318,11 +343,21 @@ function Tile({ app }: { app: App }) {
               color: "#c3ccd6",
             }}
           >
-            no data
+            {!s || s.measuredRows === 0
+              ? "no data"
+              : s.errored
+                ? `${s.errored} error`
+                : s.stale
+                  ? `${s.stale} stale`
+                  : `${s.connected} live`}
           </span>
           <span style={{ flex: 1 }} />
           <span style={{ fontFamily: "var(--mono)", fontSize: 11, color: "#9aa7b4" }}>
-            0 near limit
+            {s && s.nearLimit > 0
+              ? `${s.nearLimit} near limit`
+              : s && s.measuredRows
+                ? `${s.measuredRows} rows`
+                : ""}
           </span>
         </div>
 
@@ -339,8 +374,14 @@ function Tile({ app }: { app: App }) {
             zIndex: 1,
           }}
         >
-          <span style={{ fontSize: 20, fontWeight: 600, color: "#c9d7e8" }}>—</span>
-          <span style={{ fontSize: 13, color: "#8fa3ba" }}>—</span>
+          {/* Cost, and revenue beside it. A dash where revenue is unmeasured,
+              never $0.00 — the tile cannot tell you a figure nobody read. */}
+          <span style={{ fontSize: 20, fontWeight: 600, color: "#c9d7e8" }}>
+            {s ? usd(s.costMtd) : "—"}
+          </span>
+          <span style={{ fontSize: 13, color: "#8fa3ba" }}>
+            {s?.revenueMtd == null ? "—" : usd(s.revenueMtd)}
+          </span>
         </div>
       </div>
 
@@ -362,10 +403,19 @@ function Tile({ app }: { app: App }) {
           marginTop: 5,
           fontFamily: "var(--mono)",
           fontSize: 12.5,
-          color: "#44586f",
+          color: s?.unmeasured ? "#C8894F" : "#7C726B",
         }}
       >
-        no revenue data
+        {/* Says what is missing rather than claiming nothing exists. A vendor
+            that bills without reporting makes the cost above a floor, and that
+            belongs on the tile where the figure is. */}
+        {!s || s.measuredRows === 0
+          ? "nothing measured yet"
+          : s.unmeasured
+            ? `${s.unmeasured} vendor${s.unmeasured === 1 ? "" : "s"} unmeasured`
+            : s.lastSync
+              ? `synced ${ago(s.lastSync)}`
+              : "never synced"}
       </div>
     </Link>
   );
@@ -411,6 +461,7 @@ function AddTile({ x, y, onClick }: { x: number; y: number; onClick: () => void 
 }
 
 function AddDialog({ onClose }: { onClose: () => void }) {
+  const router = useRouter();
   const [name, setName] = useState("");
   const [file, setFile] = useState<File | null>(null);
   const [busy, setBusy] = useState(false);
@@ -426,9 +477,11 @@ function AddDialog({ onClose }: { onClose: () => void }) {
 
     const res = await fetch("/api/apps", { method: "POST", body });
     if (res.ok) {
-      // Full reload: the board is server-rendered from the table, so the
-      // simplest correct refresh is to ask the server again.
-      window.location.reload();
+      // Straight into the new app rather than back to the board. A tile with
+      // nothing behind it is half an answer — the next thing to do is always
+      // to attach something that reports, and that lives on the app's page.
+      const { slug } = await res.json();
+      router.push(`/app/${slug}`);
       return;
     }
     setError((await res.json().catch(() => ({}))).error ?? "could not add");
