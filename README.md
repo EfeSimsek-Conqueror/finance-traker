@@ -49,14 +49,16 @@ FAL_KEY=                  # optional: otherwise the fal connection's own key is 
 On an app's page, **Add a box** asks three questions in the same order every
 time: what kind of box this is, what it is, and what it needs to work.
 
-**Add with the assistant** sits above that list: describe the thing in a
-sentence and the model fills the form in — it picks the shape, names the row,
-and copies any figure out of what you wrote. It drafts and stops. The credential
-and the button stay with a person, and the draft arrives with a list of what to
-check. A figure may only be transcribed from your own sentence: asked for "our
-Cloudflare Pro plan" with no price, it leaves the amount blank rather than
-supplying the one it remembers. Each draft costs about half a cent of model
-time, reported on screen with the draft.
+**Add with the assistant** sits above that list: say what you want in your own
+words and the model fills the form in — it picks the shape, names the row, and
+copies any figure out of what you wrote. When that is not enough it asks, one
+short question at a time, and the exchange stays in the panel until it can
+settle; after three questions it drafts anyway and lists the blanks. It drafts
+and stops. The credential and the button stay with a person, and the draft
+arrives with a list of what to check. A figure may only be transcribed from what
+you wrote: asked for "our Cloudflare Pro plan" with no price, it leaves the
+amount blank rather than supplying the one it remembers. Each turn costs about a
+cent of model time, reported on screen with the draft.
 
 A vendor box takes a credential — pasted as separate fields, joined the way the
 connector expects — and is tried against the vendor before the dialog closes,

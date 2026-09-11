@@ -194,10 +194,23 @@ export function applyJudgements<T extends Resource>(
     const j = judgeCeiling(r, series.get(`${r.vendor}|${r.name}`) ?? [], t, now);
     judgements[r.id] = j;
     const noProjection = !r.projection || /no projection/i.test(r.projection);
+
+    // The projection has to agree with the colour, and it did not.
+    //
+    // judgeCeiling knows about resets_at; the connector's own projection does
+    // not. A daily quota that refills in three hours at a pace that would take
+    // five is judged `ok` — and rendered a green rail beside 36px of green type
+    // reading "runs out 14:00 today", which is the card contradicting itself
+    // in one glance. Where the judgement disagrees, the judgement wins: it is
+    // the one that looked at the reset.
+    const contradicts =
+      j.tone === "ok" && !!r.projection && /^runs out/i.test(r.projection) && !!r.resets_at;
+
     return {
       ...r,
       status: j.tone,
-      projection_note: noProjection ? j.why : r.projection_note,
+      projection: contradicts ? "refills first" : r.projection,
+      projection_note: noProjection || contradicts ? j.why : r.projection_note,
     };
   });
   return { rows: out, judgements };

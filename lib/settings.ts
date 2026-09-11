@@ -46,9 +46,13 @@ export async function saveThresholds(patch: Partial<Thresholds>): Promise<Thresh
     next.budget_warn_pct = next.budget_crit_pct;
   }
 
-  await serviceClient()
+  // Checked, because the caller is told the board has been retuned. An upsert
+  // with an unknown key fails and, unexamined, returned 200 with the new values
+  // while the board went on colouring by the old ones.
+  const { error } = await serviceClient()
     .from("settings")
     .upsert({ id: "global", ...next, updated_at: new Date().toISOString() });
+  if (error) throw new Error(`could not save thresholds: ${error.message}`);
   return next;
 }
 
@@ -80,16 +84,18 @@ export async function saveNode(
 ): Promise<void> {
   const existing = (await loadLayout(appId))[nodeKey];
   const merged = { ...(existing ?? { x: 0, y: 0, w: null, h: null }), ...clean(place) };
-  await serviceClient()
+  const { error } = await serviceClient()
     .from("node_layout")
     .upsert({ app_id: appId, node_key: nodeKey, ...merged, updated_at: new Date().toISOString() });
+  if (error) throw new Error(`could not save placement: ${error.message}`);
 }
 
 /** Forget a node's placement so it returns to where the layout puts it. */
 export async function resetLayout(appId: string, nodeKey?: string): Promise<void> {
   let q = serviceClient().from("node_layout").delete().eq("app_id", appId);
   if (nodeKey) q = q.eq("node_key", nodeKey);
-  await q;
+  const { error } = await q;
+  if (error) throw new Error(`could not reset layout: ${error.message}`);
 }
 
 const num = (v: unknown, fallback: number) => {

@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import { MANUAL, VENDORS, manualByKind, vendorById, type ManualSpec, type VendorSource } from "@/lib/sources";
 
@@ -67,13 +68,40 @@ export function AddSource({ appId, tone = "quiet" }: { appId: string; tone?: "qu
         <span style={{ color: ACCENT, fontSize: 14, lineHeight: 1 }}>+</span>
         Add a box
       </button>
-      {open && <Dialog appId={appId} onClose={() => setOpen(false)} />}
+      {/* Into the body, not into the tree this button lives in.
+          
+          This button sits in the page header, and that header blurs what is
+          behind it. A `backdrop-filter` makes an element the containing block
+          for every `position: fixed` descendant, so "cover the viewport and
+          centre on it" quietly became "cover the header strip and centre on
+          that" — the dialog hung off the top of the window and the dimming
+          covered a seventy-pixel band. Nothing about the dialog was wrong; it
+          was being measured against the wrong box. */}
+      {open && typeof document !== "undefined"
+        ? createPortal(<Dialog appId={appId} onClose={() => setOpen(false)} />, document.body)
+        : null}
     </>
   );
 }
 
 function Dialog({ appId, onClose }: { appId: string; onClose: () => void }) {
   const router = useRouter();
+
+  // Esc closes, and the page behind holds still while this is open — a modal
+  // that lets the document scroll under it reads as a stuck panel.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    const previous = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      document.body.style.overflow = previous;
+    };
+  }, [onClose]);
+
   const [pick, setPick] = useState<Pick | null>(null);
   const [values, setValues] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
@@ -81,6 +109,9 @@ function Dialog({ appId, onClose }: { appId: string; onClose: () => void }) {
   const [done, setDone] = useState<string | null>(null);
   /** What the assistant filled in, kept beside the form so it can be checked. */
   const [draft, setDraft] = useState<{ why: string; check: string[]; costUsd: number } | null>(null);
+  const [wanted, setWanted] = useState("");
+  /** The add-a-box conversation. Lives as long as the dialog does. */
+  const [thread, setThread] = useState<{ role: "user" | "assistant"; content: string }[]>([]);
 
   const set = (k: string, v: string) => setValues((p) => ({ ...p, [k]: v }));
 
@@ -91,25 +122,39 @@ function Dialog({ appId, onClose }: { appId: string; onClose: () => void }) {
     setError(null);
   }
 
+
   /**
-   * Hand the sentence to the assistant and put what comes back in the form.
+   * One turn of the conversation.
    *
-   * The draft lands in the ordinary fields, on the ordinary step, behind the
-   * ordinary button — so checking it is reading the form you were going to
-   * fill in anyway, and changing your mind is typing over it.
+   * The assistant answers with a question or with a filled-in form. A question
+   * stays in the thread and the operator writes back; a form takes over the
+   * dialog, with the transcript still behind the back button. Either way the
+   * draft lands in the ordinary fields, on the ordinary step, behind the
+   * ordinary button — so checking it is reading the form you were going to fill
+   * in anyway, and changing your mind is typing over it.
    */
-  async function runDraft(wanted: string) {
+  async function send(said: string) {
+    const next = [...thread, { role: "user" as const, content: said }];
+    setThread(next);
+    setWanted("");
     setBusy(true);
     setError(null);
+
     try {
       const res = await fetch("/api/assistant/box", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ appId, text: wanted }),
+        body: JSON.stringify({ appId, messages: next }),
       });
       const out = await res.json().catch(() => ({}));
       if (!res.ok) {
-        setError(out.error ?? "the assistant could not draft that");
+        setError(out.error ?? "the assistant could not answer");
+        setBusy(false);
+        return;
+      }
+
+      if (out.kind === "ask") {
+        setThread([...next, { role: "assistant", content: String(out.question) }]);
         setBusy(false);
         return;
       }
@@ -129,7 +174,10 @@ function Dialog({ appId, onClose }: { appId: string; onClose: () => void }) {
       } else {
         const spec = manualByKind(String(d.kind));
         if (!spec) {
-          setError("the assistant could not settle on a shape — pick one below");
+          // Unreachable in practice — the server turns an unusable draft into a
+          // question rather than sending it. Kept because "unreachable" and
+          // "never happens" are different claims, and this one is cheap.
+          setError(`the draft came back as a shape this board has no row for ("${d.kind}") — pick one below`);
           setBusy(false);
           return;
         }
@@ -238,7 +286,14 @@ function Dialog({ appId, onClose }: { appId: string; onClose: () => void }) {
           width: "100%",
           maxWidth: 660,
           maxHeight: "86vh",
-          overflowY: "auto",
+          // A column with one scrolling row in the middle, rather than one box
+          // that scrolls as a whole. The whole-box version put the assistant
+          // above the fold and the submit button below it, so on a short window
+          // the two things you might actually press were both off screen and
+          // the dialog looked like a wall of options.
+          display: "flex",
+          flexDirection: "column",
+          overflow: "hidden",
           borderRadius: 18,
           border: `1px solid ${EDGE}`,
           background: CARD,
@@ -253,6 +308,7 @@ function Dialog({ appId, onClose }: { appId: string; onClose: () => void }) {
             padding: "18px 22px",
             background: HEAD,
             borderBottom: `1px solid ${EDGE}`,
+            flexShrink: 0,
           }}
         >
           <div style={{ ...SERIF, fontSize: 20 }}>
@@ -285,62 +341,98 @@ function Dialog({ appId, onClose }: { appId: string; onClose: () => void }) {
           </button>
         </div>
 
-        <div style={{ padding: 22 }}>
+        {/* Pinned, not scrolled away with the list. It is the fastest route
+            through this dialog and it was the first thing to disappear. */}
+        {!pick && !done && (
+          <div style={{ padding: "18px 22px 0", flexShrink: 0 }}>
+            <Ask
+              thread={thread}
+              value={wanted}
+              onChange={setWanted}
+              onSubmit={() => send(wanted)}
+              busy={busy}
+            />
+            <div style={{ display: "flex", alignItems: "center", gap: 12, margin: "18px 0 2px" }}>
+              <span style={{ flex: 1, height: 1, background: EDGE }} />
+              <span style={{ fontSize: 11, color: DIM }}>or pick it yourself</span>
+              <span style={{ flex: 1, height: 1, background: EDGE }} />
+            </div>
+          </div>
+        )}
+
+        <div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: 22 }}>
           {done ? (
             <Done message={done} onFinish={finish} />
           ) : !pick ? (
-            <Chooser onPick={choose} onDraft={runDraft} busy={busy} />
+            <Chooser onPick={choose} />
           ) : (
             <>
               {draft && <Drafted {...draft} />}
               <Detail pick={pick} values={values} set={set} />
             </>
           )}
+        </div>
 
-          {error && (
-            <div
-              style={{
-                marginTop: 18,
-                padding: "12px 14px",
-                borderRadius: 10,
-                border: `1px solid ${ACCENT}55`,
-                background: "#231715",
-                fontSize: 12.5,
-                color: "#F0C3B4",
-                lineHeight: 1.55,
-              }}
-            >
-              {error}
-            </div>
-          )}
-
-          {pick && !done && (
-            <div style={{ display: "flex", gap: 10, marginTop: 22, justifyContent: "flex-end" }}>
-              <button onClick={onClose} style={{ ...btn, color: MUTED }}>
-                Cancel
-              </button>
-              <button
-                onClick={submit}
-                disabled={busy}
+        {(error || (pick && !done)) && (
+          <div
+            style={{
+              flexShrink: 0,
+              borderTop: `1px solid ${EDGE}`,
+              background: HEAD,
+              padding: "14px 22px",
+            }}
+          >
+            {error && (
+              <div
                 style={{
-                  ...btn,
-                  border: "1px solid transparent",
-                  background: ACCENT,
-                  color: "#1A1210",
-                  opacity: busy ? 0.55 : 1,
+                  padding: "12px 14px",
+                  borderRadius: 10,
+                  border: `1px solid ${ACCENT}55`,
+                  background: "#231715",
+                  fontSize: 12.5,
+                  color: "#F0C3B4",
+                  lineHeight: 1.55,
                 }}
               >
-                {busy
-                  ? pick.family === "vendor"
-                    ? "Asking the vendor…"
-                    : "Adding…"
-                  : pick.family === "vendor"
-                    ? "Connect and read now"
-                    : "Add the row"}
-              </button>
-            </div>
-          )}
-        </div>
+                {error}
+              </div>
+            )}
+
+            {pick && !done && (
+              <div
+                style={{
+                  display: "flex",
+                  gap: 10,
+                  marginTop: error ? 14 : 0,
+                  justifyContent: "flex-end",
+                }}
+              >
+                <button onClick={onClose} style={{ ...btn, color: MUTED }}>
+                  Cancel
+                </button>
+                <button
+                  onClick={submit}
+                  disabled={busy}
+                  style={{
+                    ...btn,
+                    border: "1px solid transparent",
+                    background: ACCENT,
+                    color: "#1A1210",
+                    opacity: busy ? 0.55 : 1,
+                  }}
+                >
+                  {busy
+                    ? pick.family === "vendor"
+                      ? "Asking the vendor…"
+                      : "Adding…"
+                    : pick.family === "vendor"
+                      ? "Connect and read now"
+                      : "Add the row"}
+                </button>
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -350,27 +442,9 @@ const title = (p: Pick) => (p.family === "vendor" ? p.vendor.label : p.spec.labe
 
 /* ── step one: the kind of box ───────────────────────────────────────────── */
 
-function Chooser({
-  onPick,
-  onDraft,
-  busy,
-}: {
-  onPick: (p: Pick) => void;
-  onDraft: (wanted: string) => void;
-  busy: boolean;
-}) {
-  const [wanted, setWanted] = useState("");
-
+function Chooser({ onPick }: { onPick: (p: Pick) => void }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
-      <Ask value={wanted} onChange={setWanted} onSubmit={() => onDraft(wanted)} busy={busy} />
-
-      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-        <span style={{ flex: 1, height: 1, background: EDGE }} />
-        <span style={{ fontSize: 11, color: DIM }}>or pick it yourself</span>
-        <span style={{ flex: 1, height: 1, background: EDGE }} />
-      </div>
-
       <Group
         heading="Reports for itself"
         note="a credential, then it refills on every sync"
@@ -411,18 +485,33 @@ function Chooser({
  * not a third kind of box — it is a faster route to one of the ten below. What
  * comes back is a form on the same step with the same button, so there is no
  * second way for something to reach the board.
+ *
+ * A thread rather than a single field because half of what an operator types
+ * first is not enough to choose a shape. "add the analytics thing" needs one
+ * question and then it is obvious; the version that could only succeed or fail
+ * answered that with an error telling them to do it by hand themselves.
  */
 function Ask({
+  thread,
   value,
   onChange,
   onSubmit,
   busy,
 }: {
+  thread: { role: "user" | "assistant"; content: string }[];
   value: string;
   onChange: (v: string) => void;
   onSubmit: () => void;
   busy: boolean;
 }) {
+  const tail = useRef<HTMLDivElement | null>(null);
+
+  // Follow the conversation down. The panel is short by design and the newest
+  // line is the only one that needs an answer.
+  useEffect(() => {
+    tail.current?.scrollIntoView({ block: "end" });
+  }, [thread.length, busy]);
+
   return (
     <div
       style={{
@@ -453,23 +542,87 @@ function Ask({
         </span>
       </div>
 
+      {(thread.length > 0 || busy) && (
+        <div
+          style={{
+            maxHeight: 168,
+            overflowY: "auto",
+            margin: "12px 0 0",
+            display: "flex",
+            flexDirection: "column",
+            gap: 9,
+          }}
+        >
+          {thread.map((m, i) =>
+            m.role === "user" ? (
+              <div
+                key={i}
+                style={{
+                  alignSelf: "flex-end",
+                  maxWidth: "85%",
+                  padding: "7px 11px",
+                  borderRadius: 10,
+                  background: "#241E1C",
+                  fontSize: 12.5,
+                  color: INK_2,
+                  lineHeight: 1.5,
+                }}
+              >
+                {m.content}
+              </div>
+            ) : (
+              <div
+                key={i}
+                style={{
+                  display: "flex",
+                  gap: 8,
+                  maxWidth: "92%",
+                  fontSize: 12.5,
+                  color: INK,
+                  lineHeight: 1.55,
+                }}
+              >
+                <span style={{ color: ACCENT, flexShrink: 0 }}>◈</span>
+                <span>{m.content}</span>
+              </div>
+            ),
+          )}
+          {busy && (
+            <div style={{ display: "flex", gap: 8, fontSize: 12.5, color: DIM }}>
+              <span style={{ color: ACCENT }}>◈</span>
+              <span>thinking…</span>
+            </div>
+          )}
+          <div ref={tail} />
+        </div>
+      )}
+
       <textarea
         value={value}
         onChange={(e) => onChange(e.target.value)}
         onKeyDown={(e) => {
-          // ⌘/Ctrl+Enter submits; plain Enter is a newline, because a sentence
-          // about a cost often wants a second one about where it came from.
-          if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && value.trim() && !busy) onSubmit();
+          // Enter sends, because by the second turn this is a conversation and
+          // a conversation that needs a modifier key to answer a question is a
+          // form wearing a chat's clothes. Shift+Enter still breaks a line.
+          if (e.key === "Enter" && !e.shiftKey && value.trim() && !busy) {
+            e.preventDefault();
+            onSubmit();
+          }
         }}
-        rows={3}
-        placeholder="we pay $12 a month to Cloudflare for the domain — or: connect our Stripe account"
+        rows={thread.length ? 2 : 3}
+        placeholder={
+          thread.length
+            ? "answer, or add anything else it should know"
+            : "we pay $12 a month to Cloudflare for the domain — or: connect our Stripe account"
+        }
         style={{ ...input, marginTop: 12, resize: "vertical", lineHeight: 1.5 }}
       />
 
       <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 10 }}>
         <span style={{ fontSize: 11.5, color: DIM, lineHeight: 1.5 }}>
-          It may only copy figures out of your sentence. It will not supply a price it happens to
-          know, and it never sees or fills in a credential.
+          {thread.length
+            ? "it asks when it cannot tell — answer in a few words and it will fill the form in"
+            : "It may only copy figures out of your sentence. It will not supply a price it happens to know, and it never sees or fills in a credential."}
         </span>
         <span style={{ flex: 1 }} />
         <button
@@ -485,7 +638,7 @@ function Ask({
             opacity: busy || !value.trim() ? 0.5 : 1,
           }}
         >
-          {busy ? "Drafting…" : "Draft it"}
+          {busy ? "Thinking…" : thread.length ? "Send" : "Draft it"}
         </button>
       </div>
     </div>

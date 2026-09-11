@@ -68,6 +68,8 @@ export async function getApp(slug: string): Promise<App | null> {
 /** A gauge on an app's board. Shapes differ by `kind`; see the app map. */
 export type Resource = {
   id: string;
+  /** Present only where a query selected it — see counted() in lib/money. */
+  app_id?: string;
   kind: "metered" | "usage" | "fixed" | "revenue";
   name: string;
   vendor: string;

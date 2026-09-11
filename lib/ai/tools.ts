@@ -438,9 +438,22 @@ export async function runTool(
           margin_pct: revenue > 0 ? ((revenue - cost) / revenue) * 100 : null,
           by_vendor: vendors.map((v) => ({ vendor: v.vendor, usd: v.total, formatted: usd(v.total) })),
           billing_but_unmeasured: ghostVendors(rows),
+          // Named for what it is. `pct` held 0.4254 while the board rendered 43%
+          // from the same value, and the briefing verifier — which special-cases
+          // a field called pct — would admit "1%" as a faithful quote of it.
           ledger_coverage: vendors
-            .map((v) => ({ vendor: v.vendor, ...(coverage(rows, v.vendor) ?? {}) }))
-            .filter((c) => "pct" in c),
+            .map((v) => {
+              const c = coverage(rows, v.vendor);
+              return c
+                ? {
+                    vendor: v.vendor,
+                    coverage_pct: Math.round(c.pct * 100),
+                    unattributed_usd: c.unattributed,
+                    unattributed: usd(c.unattributed),
+                  }
+                : null;
+            })
+            .filter(Boolean),
           note:
             "One reading per vendor per bucket. A shared subscription counted under several apps is collapsed to one bill.",
         },
@@ -491,6 +504,13 @@ export async function runTool(
         .maybeSingle();
       if (!a) return { result: { error: `no app with slug "${args.app}"` } };
 
+      // A figure that is not a number must not become a null row that the board
+      // then renders as "—". Refusing is information; a blank is not.
+      const monthly = Number(args.monthly_usd);
+      if (!Number.isFinite(monthly) || monthly < 0) {
+        return { result: { error: `monthly_usd must be a non-negative number, got ${JSON.stringify(args.monthly_usd)}` } };
+      }
+
       const { data, error } = await db
         .from("resources")
         .insert({
@@ -502,7 +522,7 @@ export async function runTool(
           // human stated for one a vendor reported.
           source: "manual",
           status: "neutral",
-          mtd_usd: Number(args.monthly_usd),
+          mtd_usd: monthly,
           projection_note: args.note ? String(args.note) : null,
           is_sample: false,
         })
@@ -783,8 +803,10 @@ async function historyFor(db: Db, app: { id: string; slug: string; name: string 
 async function allReal(db: ReturnType<typeof serviceClient>): Promise<Resource[]> {
   const { data } = await db
     .from("resources")
+    // app_id is load-bearing: counted() keys its winner on it, so leaving it
+    // out makes one app's connector delete another app's spend.
     .select(
-      "id, kind, name, vendor, unit, used, cap, reset_label, projection, projection_note, status, mtd_usd, run_rate_usd, source, is_sample",
+      "id, app_id, kind, name, vendor, unit, used, cap, reset_label, projection, projection_note, status, mtd_usd, run_rate_usd, source, is_sample",
     );
   // Same join the board applies. Without it the model would report a ceiling
   // twice — once with a limit and no reading, once with a reading and no limit.
