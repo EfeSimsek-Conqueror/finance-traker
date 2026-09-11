@@ -356,7 +356,7 @@ function Tile({ app, s }: { app: App; s?: AppSummary }) {
             {s && s.nearLimit > 0
               ? `${s.nearLimit} near limit`
               : s && s.measuredRows
-                ? `${s.measuredRows} rows`
+                ? `${s.measuredRows} row${s.measuredRows === 1 ? "" : "s"}`
                 : ""}
           </span>
         </div>
